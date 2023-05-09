@@ -4,21 +4,21 @@
 
 ;; Author: lorniu <lorniu@gmail.com>
 ;; URL: https://github.com/lorniu/bili.el
-;; Package-Requires: ((emacs "28.1") (mpvi "1") (org "9"))
+;; Package-Requires: ((emacs "28.1") (mpvi "1") (org "9.0"))
 ;; Keywords: multimedia, application
 ;; SPDX-License-Identifier: MIT
 ;; Version: 0.9
 
 ;;; Commentary:
 ;;
-;; 在 Emacs 中看 B 站。结合 org + mpvi 食用的一系列辅助函数。
+;; 在 Emacs 中看 B 站。结合 org + mpvi 食用的一系列辅助方法。
 ;;
 ;; 使用步骤:
 ;;
 ;;  1. 安装 `mpvi'
-;;  2. 将本包加入 `load-path' 并加载之
-;;  3. 在 org 中调用 `bili-insert-xxx' 插入相关视频
-;;  4. 点击链接播放
+;;  2. 将本包加入 `load-path' 并 \\=(require 'bili)
+;;  3. 在 org buffer 中调用 `bili-insert-xxx' 插入相关视频
+;;  4. 点击链接进行播放
 ;;
 ;; https://github.com/SocialSisterYi/bilibili-API-collect
 
@@ -32,10 +32,6 @@
   :group 'external
   :prefix 'bili-)
 
-(defcustom bili-mid nil
-  "你的 mid，是一串数字 (比如 \"2571691\")，可以在浏览器的 url 里看到"
-  :type 'string)
-
 (defcustom bili-cookie-text nil
   "在浏览器 (比如 Chrome/Edge) 打开 bilibili，按 F12，在 Network -> Request Header -> cookie 条目上右键复制可得"
   :type 'string)
@@ -43,6 +39,8 @@
 (defcustom bili-user-agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36"
   "浏览器的 User Agent"
   :type 'string)
+
+(defvar bili-myinfo nil)
 
 (defvar url-http-end-of-headers)
 
@@ -121,6 +119,12 @@
 
 
 ;;; APIs
+
+(defun bili-get-myinfo ()
+  "我的用户信息"
+  (or bili-myinfo
+      (setq bili-myinfo
+            (bili-get "https://api.bilibili.com/x/space/myinfo"))))
 
 (cl-defun bili-get-popular (&optional (pn 1) (ps 50))
   "热门视频"
@@ -213,7 +217,6 @@
 
 (defun bili-get-user-favs (mid)
   "用户的收藏夹"
-  ;; (bili-get-user-favs bili-mid)
   (let ((data (bili-get "https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=%s" mid)))
     (cl-coerce (alist-get 'list data) 'list)))
 
@@ -416,7 +419,8 @@
   (interactive (list
                 (if-let (id (org-entry-get (point) "MEDIA-ID"))
                     (read-string "media-id of fav: " id nil id)
-                  (let* ((id (or (org-entry-get (point) "MID") bili-mid))
+                  (let* ((id (or (org-entry-get (point) "MID")
+                                 (ignore-errors (alist-get 'mid (bili-get-myinfo)))))
                          (mid (read-string "mid of user: " id nil id))
                          (favs (bili-get-user-favs mid))
                          (pairs (cl-loop for item in favs
