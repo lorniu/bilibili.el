@@ -126,6 +126,11 @@
       (setq bilibili-myinfo
             (bilibili-get "https://api.bilibili.com/x/space/myinfo"))))
 
+(defun bilibili-get-userinfo (mid)
+  "获取用户详细信息"
+  ;; (bilibili-get-userinfo 2)
+  (bilibili-get "https://api.bilibili.com/x/space/acc/info?mid=%s" mid))
+
 (cl-defun bilibili-get-popular (&optional (pn 1) (ps 50))
   "热门视频"
   (cl-loop with data = (bilibili-get "https://api.bilibili.com/x/web-interface/popular?pn=%d&ps=%d" pn ps)
@@ -149,7 +154,7 @@
                     :coined    (alist-get 'coin stat)
                     :shared    (alist-get 'share stat))))
 
-(cl-defun bilibili-get-rankings (&optional (rid 0))
+(cl-defun bilibili-get-ranking (&optional (rid 0))
   "排行榜"
   (cl-loop with data = (bilibili-get "https://api.bilibili.com/x/web-interface/ranking/v2?rid=%d" rid)
            for item across (alist-get 'list data)
@@ -274,19 +279,23 @@
   "用户 MID 创建的合集 SID 的内容"
   ;; (bilibili-get-upper-season-videos "8047632" "413472")
   (let* ((data (bilibili-get "https://api.bilibili.com/x/polymer/space/seasons_archives_list?mid=%s&season_id=%s&sort_reverse=false&page_num=%d&page_size=%d" mid sid pn ps))
-         (meta (alist-get 'meta data))
          (items (alist-get 'archives data)))
     (if (= 0 (length items)) (user-error "Empty response"))
-    (cl-loop for item across items
-             collect (bilibili-video
-                      :meta      meta
-                      :bvid      (alist-get 'bvid item)
-                      :pic       (alist-get 'pic item)
-                      :title     (alist-get 'title item)
-                      :duration  (alist-get 'duration item)
-                      :date      (alist-get 'pubdate item)
-                      :mid       (alist-get 'mid meta)
-                      :played    (alist-get 'view (alist-get 'stat item))))))
+    (let* ((meta (alist-get 'meta data))
+           (mid (alist-get 'mid meta))
+           (author (alist-get 'name (bilibili-get-userinfo mid))))
+      (push `(author . ,author) meta)
+      (cl-loop for item across items
+               collect (bilibili-video
+                        :meta      meta
+                        :bvid      (alist-get 'bvid item)
+                        :pic       (alist-get 'pic item)
+                        :title     (alist-get 'title item)
+                        :duration  (alist-get 'duration item)
+                        :date      (alist-get 'pubdate item)
+                        :mid       mid
+                        :author    author
+                        :played    (alist-get 'view (alist-get 'stat item)))))))
 
 (cl-defun bilibili-search-videos (keyword &optional (pn 1))
   ;; (bilibili-search-video "jinitaimei")
@@ -318,7 +327,7 @@
      (user-error "只能插入到 org buffer 中")))
 
 (defun bilibili-update-current-org-items (videos)
-  "插入或更新 org buffer 中的结果"
+  "插入或更新 org buffer 中的结果。这个逻辑有待优化。"
   (unless (derived-mode-p 'org-mode)
     (user-error "只能插入到 org buffer 中"))
   (save-restriction
@@ -348,7 +357,7 @@
 (defun bilibili-insert-ranking (&optional rid)
   "排行榜"
   (interactive (list (read-number "分区号: " 0)))
-  (bilibili-update-current-org-items (bilibili-get-rankings (or rid 0))))
+  (bilibili-update-current-org-items (bilibili-get-ranking (or rid 0))))
 
 ;;;###autoload
 (defun bilibili-insert-precious ()
@@ -382,9 +391,11 @@
                 result))))
     (when (> (length vs) 0)
       (bilibili-update-current-org-items vs))
-    (org-entry-put (point) "MID" (format "%s" mid))
-    (org-entry-put (point) "DESC" (format "UP %s has %d videos"
-                                          mid (alist-get 'count (slot-value (car vs) 'meta))))))
+    (org-entry-put (point) "MEM" (format "UP [%s] 共有 %d 个视频 (%s)"
+                                         (slot-value (car vs) 'author)
+                                         (alist-get 'count (slot-value (car vs) 'meta))
+                                         (format-time-string "%Y/%m/%d")))
+    (org-entry-put (point) "MID" (format "%s" mid))))
 
 ;;;###autoload
 (defun bilibili-insert-upper-season-videos (mid sid)
@@ -407,11 +418,13 @@
          (meta (slot-value (car vs) 'meta)))
     (when (> (length vs) 0)
       (bilibili-update-current-org-items vs))
+    (org-entry-put (point) "MEM" (format "合集 [%s · %s] 共 %d 个视频 (%s)"
+                                         (alist-get 'author meta)
+                                         (alist-get 'name meta)
+                                         (alist-get 'total meta)
+                                         (format-time-string "%Y/%m/%d")))
     (org-entry-put (point) "MID" mid)
-    (org-entry-put (point) "SID" sid)
-    (org-entry-put (point) "DESC" (format "合集·%s (共 %d 个视频)"
-                                          (alist-get 'name meta)
-                                          (alist-get 'total meta)))))
+    (org-entry-put (point) "SID" sid)))
 
 ;;;###autoload
 (defun bilibili-insert-favs (&optional mlid)
@@ -441,6 +454,10 @@
     (while (< (length result) total)
       (setq result (append result (bilibili-get-fav-videos mlid (cl-incf page)))))
     (bilibili-update-current-org-items result)
+    (org-entry-put (point) "MEM" (format "收藏夹 [%s] 共 %d 个视频 (%s)"
+                                         (alist-get 'title meta)
+                                         (alist-get 'media_count meta)
+                                         (format-time-string "%Y/%m/%d")))
     (org-entry-put (point) "MEDIA-ID" (format "%s" mlid))))
 
 ;;;###autoload
