@@ -19,6 +19,7 @@
 - `bilibili-insert-upper-season-videos` 某 UP 主某合集下的所有视频
 - `bilibili-insert-favs` 某收藏夹下所有视频
 - `bilibili-insert-search` 所有符合关键词的视频
+- `bilibili-fav-it/bilibili-triple-it` 加入收藏夹/一键三连
 
 ## 补充说明
 

@@ -45,14 +45,14 @@
 (defvar url-http-end-of-headers)
 
 (defun bilibili-req (url &optional data headers)
-  (let ((url-debug nil)
-        (url-user-agent bilibili-user-agent)
-        (url-request-extra-headers `(("cookie" . ,bilibili-cookie-text) ,@headers))
+  (let ((url-user-agent bilibili-user-agent)
+        (url-request-extra-headers `(("content-type" . "application/x-www-form-urlencoded")
+                                     ("cookie" . ,bilibili-cookie-text) ,@headers))
         (url-request-method (if data "POST" "GET"))
         (url-request-data data))
     (with-current-buffer (url-retrieve-synchronously url t nil)
       (unwind-protect
-          (condition-case nil
+          (condition-case err
               (progn
                 (goto-char url-http-end-of-headers)
                 ;; hack for 'space/arc/search': {"code":-509,"message":"请求过于频繁，请稍后再试","ttl":1}{data...}
@@ -61,7 +61,7 @@
                   (goto-char (- (match-end 0) 1)))
                 (json-read-from-string
                  (decode-coding-string (buffer-substring (point) (point-max)) 'utf-8)))
-            (error (user-error "Something wrong")))
+            (error (user-error "Something Wrong: %s" err)))
         (kill-buffer)))))
 
 (defun bilibili-get (url-tpl &rest args)
@@ -109,7 +109,7 @@
   (with-slots (author title played replied duration date) o
     (format "- %s%s[[%s][%s]]%s  %7s | %6s | %8s | %s"
             (or author "")
-            (if author (make-string (max 0 (- 15 (string-width author))) ? ) "")
+            (if author (make-string (max 0 (- 16 (string-width author))) ? ) "")
             (bilibili-url o) title
             (make-string (max 0 (- 65 (string-width title))) ? )
             (if (numberp duration) (mpvi-secs-to-hms duration nil t) duration)
@@ -130,6 +130,28 @@
   "获取用户详细信息"
   ;; (bilibili-get-userinfo 2)
   (bilibili-get "https://api.bilibili.com/x/space/acc/info?mid=%s" mid))
+
+(defun bilibili-get-videoinfo (bvid)
+  "获取视频信息"
+  (bilibili-get "https://api.bilibili.com/x/web-interface/view?bvid=%s" bvid))
+
+(cl-defun bilibili-get-followings (&optional mid (order 'attention))
+  "获取所有关注的人"
+  ;; (bilibili-get-followings)
+  (unless mid (setq mid (alist-get 'mid (bilibili-get-myinfo))))
+  (unless mid (user-error "MID is required"))
+  (let (result total (pn 0))
+    (while (or (null total) (< (length result) total))
+      (let ((us (bilibili-get "https://api.bilibili.com/x/relation/followings?order_type=%s&vmid=%s&pn=%d&ps=50" (or order "") mid (cl-incf pn))))
+        (when (= 0 (length (alist-get 'list us)))
+          (user-error "Empty response"))
+        (unless total (setq total (alist-get 'total us)))
+        (setq result (append result
+                             (cl-loop for item across (alist-get 'list us)
+                                      collect `((mid . ,(alist-get 'mid item))
+                                                (name . ,(alist-get 'uname item))
+                                                (sign . ,(alist-get 'sign item))))))))
+    result))
 
 (cl-defun bilibili-get-popular (&optional (pn 1) (ps 50))
   "热门视频"
@@ -219,6 +241,10 @@
                     :played    (alist-get 'view stat)
                     :danmaku   (alist-get 'danmaku stat)
                     :liked     (alist-get 'like stat))))
+
+(defun bilibili-check-fav (rid)
+  "检查视频是否被收藏"
+  (eq (alist-get 'favoured (bilibili-get "http://api.bilibili.com/x/v2/fav/video/favoured?aid=%s" rid)) t))
 
 (defun bilibili-get-user-favs (mid)
   "用户的收藏夹"
@@ -316,6 +342,33 @@
                     :played    (alist-get 'play item)
                     :danmaku   (alist-get 'video_review item))))
 
+(defun bilibili-fav-video (rid mlid)
+  "加入收藏夹. rid is avid or bvid, mlid is media-id, 如果 mlid 为空，那么将是取消收藏"
+  (if (and bilibili-cookie-text (string-match "bili_jct=\\([^;]+\\);" bilibili-cookie-text))
+      (let* ((csrf (match-string 1 bilibili-cookie-text))
+             (avid (if (string-prefix-p "BV" rid) (alist-get 'aid (bilibili-get-videoinfo rid)) rid))
+             (act (if mlid (format "add_media_ids=%s" mlid)
+                    (format "del_media_ids=%s"
+                            (mapconcat (lambda (f) (format "%s" (alist-get 'id f)))
+                                       (bilibili-get-user-favs (alist-get 'mid (bilibili-get-myinfo)))
+                                       ","))))
+             (params (format "type=2&csrf=%s&rid=%s&%s" csrf avid act))
+             (headers `(("origin" . "https://www.bilibili.com")
+                        ("referer" . ,(format "https://www.bilibili.com/video/%s/" rid)))))
+        (bilibili-req "https://api.bilibili.com/x/v3/fav/resource/deal" params headers))
+    (user-error "Cookie invalid")))
+
+(defun bilibili-triple-video (rid)
+  "一键三连. rid is avid or bvid"
+  (if (and bilibili-cookie-text (string-match "bili_jct=\\([^;]+\\);" bilibili-cookie-text))
+      (let* ((csrf (match-string 1 bilibili-cookie-text))
+             (idstr (format "%s=%s" (if (string-prefix-p "BV" rid) "bvid" "aid") rid))
+             (params (format "csrf=%s&%s" csrf idstr))
+             (headers `(("origin" . "https://www.bilibili.com")
+                        ("referer" . ,(format "https://www.bilibili.com/video/%s/" rid)))))
+        (bilibili-req "https://api.bilibili.com/x/web-interface/archive/like/triple" params headers))
+    (user-error "Cookie invalid")))
+
 
 ;;; Commands
 
@@ -347,6 +400,51 @@
         (insert rs)
         (if (looking-at-p "[+-] ") (insert d))))))
 
+(defun bilibili-pick-mid ()
+  "读取一个 MID 或选择一个关注的人"
+  (let* ((all (cons (bilibili-get-myinfo) (bilibili-get-followings)))
+         (items (mapcar (lambda (f) (cons (alist-get 'name f) (alist-get 'mid f))) all))
+         (choosen (completing-read "填入 UP 的 mid，或从列表中选择: "
+                                   (lambda (input pred action)
+                                     (if (eq action 'metadata)
+                                         `(metadata (display-sort-function . ,#'identity))
+                                       (complete-with-action action items input pred)))))
+         (mid (cdr (assoc choosen items))))
+    (if (null mid)
+        (if (string-match-p "^[0-9]+$" choosen) `((mid . ,choosen))
+          (user-error "没找到哦"))
+      (cl-find-if (lambda (f) (equal (alist-get 'mid f) mid)) all))))
+
+(defun bilibili-pick-rid ()
+  "读取视频的 id, avid 或 bvid, 播放中的优先、光标下的其次"
+  (let* ((node (if (derived-mode-p 'org-mode) (cadr (org-element-context))))
+         (path (mpvi-prop 'path)) mid)
+    (when (and (null path) (equal "https" (plist-get node :type)))
+      (setq path (plist-get node :path)))
+    (when (and path (string-match "bilibili.com/video/\\([A-Za-z0-9]+\\)" path))
+      (setq mid (match-string 1 path)))
+    (let ((mid (read-string "BVID or aid of Video: " mid)))
+      (if (string-match-p "^[a-zA-Z0-9]+$" mid) mid
+        (user-error "好像输入的不是正确的 aid 或 BVID")))))
+
+(defun bilibili-pick-fav (&optional mid)
+  "选中一个收藏夹"
+  (unless mid (setq mid (alist-get 'mid (bilibili-get-myinfo))))
+  (unless mid (user-error "MID 不能为空，如果选择自己的收藏夹，请确保 `bilibili-cookie-text' 是正确的"))
+  (let* ((favs (bilibili-get-user-favs mid))
+         (items (mapcar (lambda (f)
+                          (cons (format "%s (%d)"  (alist-get 'title f) (alist-get 'media_count f))
+                                (alist-get 'id f)))
+                        favs))
+         (choosen (completing-read "Fav to choose: "
+                                   (lambda (input pred action)
+                                     (if (eq action 'metadata)
+                                         `(metadata (display-sort-function . ,#'identity))
+                                       (complete-with-action action items input pred)))
+                                   nil t))
+         (id (cdr (assoc choosen items))))
+    (cl-find-if (lambda (f) (equal (alist-get 'id f) id)) favs)))
+
 ;;;###autoload
 (defun bilibili-insert-popular (&optional pn)
   "热门视频"
@@ -377,7 +475,7 @@
   (interactive
    (list (if-let (id (org-entry-get (point) "MID"))
              (read-string "mid: " id nil id)
-           (read-string "mid of user: "))
+           (format "%s" (alist-get 'mid (bilibili-pick-mid))))
          (read-number "Page Number, 0 for all: " 1)))
   (cl-assert (and (string-match-p "^[0-9]+$" mid) (>= pn 0)))
   (let ((vs (if (> pn 0)
@@ -391,11 +489,11 @@
                 result))))
     (when (> (length vs) 0)
       (bilibili-update-current-org-items vs))
+    (org-entry-put (point) "MID" (format "%s" mid))
     (org-entry-put (point) "MEM" (format "UP [%s] 共有 %d 个视频 (%s)"
                                          (slot-value (car vs) 'author)
                                          (alist-get 'count (slot-value (car vs) 'meta))
-                                         (format-time-string "%Y/%m/%d")))
-    (org-entry-put (point) "MID" (format "%s" mid))))
+                                         (format-time-string "%Y/%m/%d")))))
 
 ;;;###autoload
 (defun bilibili-insert-upper-season-videos (mid sid)
@@ -403,10 +501,10 @@
   (interactive
    (list (if-let (id (org-entry-get (point) "MID"))
              (read-string "mid: " id nil id)
-           (read-string "mid of user: "))
+           (format "%s" (alist-get 'mid (bilibili-pick-mid))))
          (if-let (id (org-entry-get (point) "SID"))
              (read-string "season id: " id nil id)
-           (read-string "season id: "))))
+           (read-string "season id: ")))) ; 没找到合适的列出合集列表的 API
   (cl-assert (and (string-match-p "^[0-9]+$" mid) (string-match-p "^[0-9]+$" mid)))
   (let* ((vs (let (result total (page 0))
                (while (or (null total) (< (length result) total))
@@ -418,13 +516,13 @@
          (meta (slot-value (car vs) 'meta)))
     (when (> (length vs) 0)
       (bilibili-update-current-org-items vs))
+    (org-entry-put (point) "MID" mid)
+    (org-entry-put (point) "SID" sid)
     (org-entry-put (point) "MEM" (format "合集 [%s · %s] 共 %d 个视频 (%s)"
                                          (alist-get 'author meta)
                                          (alist-get 'name meta)
                                          (alist-get 'total meta)
-                                         (format-time-string "%Y/%m/%d")))
-    (org-entry-put (point) "MID" mid)
-    (org-entry-put (point) "SID" sid)))
+                                         (format-time-string "%Y/%m/%d")))))
 
 ;;;###autoload
 (defun bilibili-insert-favs (&optional mlid)
@@ -454,11 +552,11 @@
     (while (< (length result) total)
       (setq result (append result (bilibili-get-fav-videos mlid (cl-incf page)))))
     (bilibili-update-current-org-items result)
+    (org-entry-put (point) "MEDIA-ID" (format "%s" mlid))
     (org-entry-put (point) "MEM" (format "收藏夹 [%s] 共 %d 个视频 (%s)"
                                          (alist-get 'title meta)
                                          (alist-get 'media_count meta)
-                                         (format-time-string "%Y/%m/%d")))
-    (org-entry-put (point) "MEDIA-ID" (format "%s" mlid))))
+                                         (format-time-string "%Y/%m/%d")))))
 
 ;;;###autoload
 (defun bilibili-insert-search (&optional keyword pageno)
@@ -468,13 +566,35 @@
   (insert (format "Search '%s', page %d:\n" keyword pageno))
   (bilibili-insert (bilibili-search-videos keyword pageno)))
 
+;;; Action
+
+;;;###autoload
+(defun bilibili-fav-it ()
+  "加入收藏夹"
+  (interactive)
+  (let ((rid (bilibili-pick-rid)))
+    (if (bilibili-check-fav rid)
+        (when (y-or-n-p "本视频已在收藏夹中，是否取消收藏?")
+          (bilibili-fav-video rid nil)
+          (message "从所有收藏夹取消，结束"))
+      (let ((fav (bilibili-pick-fav)))
+        (bilibili-fav-video rid (alist-get 'id fav))
+        (message "添加到收藏夹 [%s]，成功了" (alist-get 'title fav))))))
+
+;;;###autoload
+(defun bilibili-triple-it ()
+  "一键三连"
+  (interactive)
+  (let ((rid (bilibili-pick-rid)))
+    (bilibili-triple-video rid)
+    (message "一键三连当前视频，成功了")))
+
 
 ;;; 将 org link 与 `mpvi' 集成。直接点击 bilibili.com 的链接会使用 mpv 打开
 
 (defun bilibili-https-follow-to-mpvi (url arg)
   "让 bilibli 的链接点击后使用 `mpvi-open` 打开"
-  (if (and (featurep 'mpvi)
-           (string-match-p "bilibili.com/" url))
+  (if (string-match-p "bilibili.com/" url)
       (mpvi-open (concat "https:" url))
     (browse-url (concat "https:" url) arg)))
 
