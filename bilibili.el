@@ -79,6 +79,25 @@
             pt (- pt size)))
     str))
 
+(defun bilibili-string-pixel-width (string)
+  "Return the width of STRING in pixels.
+Compat with `string-pixel-width' in Emacs 29."
+  (if (fboundp 'string-pixel-width) (string-pixel-width string)
+    (if (zerop (length string)) 0
+      (with-current-buffer (get-buffer-create " *string-pixel-width*")
+        (when (bound-and-true-p display-line-numbers-mode)
+          (display-line-numbers-mode -1))
+        (delete-region (point-min) (point-max))
+        (insert string)
+        (car (buffer-text-pixel-size nil nil t))))))
+
+(defun bilibili-get-padding-spaces (text width &optional limit)
+  "Padding TEXT to at least WIDTH with spaces."
+  (let ((w (bilibili-string-pixel-width text)) (num 0))
+    (while (< w width)
+      (setq w (bilibili-string-pixel-width (concat text (make-string (cl-incf num) ? )))))
+    (make-string (max (or limit 0) num) ? )))
+
 
 ;;; Components
 
@@ -106,16 +125,22 @@
 
 (cl-defmethod bilibili-org-item ((o bilibili-video))
   "输出到 Org 中的格式。可以根据自己的喜好自定义"
-  (with-slots (author title played replied duration date) o
-    (format "- %s%s[[%s][%s]]%s  %7s | %6s | %8s | %s"
-            (or author "")
-            (if author (make-string (max 0 (- 16 (string-width author))) ? ) "")
-            (bilibili-url o) title
-            (make-string (max 0 (- 65 (string-width title))) ? )
-            (if (numberp duration) (mpvi-secs-to-hms duration nil t) duration)
-            (if replied (bilibili-group-number replied) "-")
-            (if played (bilibili-group-number played) "-")
-            (format-time-string "%y-%m-%d" date))))
+  (with-slots (author mid title played replied duration date meta) o
+    (let* ((time (if (numberp duration) (mpvi-secs-to-hms duration nil t) (string-trim duration)))
+           (awidth (if-let (ps (and author
+                                    (mapcar (lambda (v) (bilibili-string-pixel-width (slot-value v 'author)))
+                                            (alist-get 'videos meta))))
+                       (+ (apply #'max ps) 20)
+                     220))
+           (space1 (if author (bilibili-get-padding-spaces author awidth 1) ""))
+           (twidth (max 1085 (+ (bilibili-string-pixel-width time) awidth 780)))
+           (space2 (bilibili-get-padding-spaces (concat author space1 title time) twidth 1)))
+      (format "- %s%s· [[%s][%s]]%s%s | %7s | %9s | %s"
+              (if author (format "[[https://space.bilibili.com/%s][%s]]" mid author) "")
+              space1 (bilibili-url o) title space2 time
+              (if replied (bilibili-group-number replied) "-")
+              (if played (bilibili-group-number played) "-")
+              (format-time-string "%y-%m-%d" date)))))
 
 
 ;;; APIs
@@ -375,8 +400,10 @@
 (defmacro bilibili-insert (&rest form)
   `(if (derived-mode-p 'org-mode)
        (save-excursion
-         (cl-loop for video in (progn ,@form)
-                  do (insert (bilibili-org-item video) "\n")))
+         (dolist (v (progn ,@form))
+           (set-slot-value
+            v 'meta `((videos . ,videos) ,@(slot-value v 'meta)))
+           (insert (bilibili-org-item v) "\n")))
      (user-error "只能插入到 org buffer 中")))
 
 (defun bilibili-update-current-org-items (videos)
@@ -393,6 +420,8 @@
           (when (search-forward (format "[%s]" (bilibili-url v)) nil t)
             (beginning-of-line)
             (delete-region (line-beginning-position) (+ 1 (line-end-position))))
+          (set-slot-value
+           v 'meta `((videos . ,videos) ,@(ignore-errors (slot-value v 'meta))))
           (setq rs (concat rs (bilibili-org-item v) "\n")))
         (goto-char (point-min))
         (re-search-forward "^$" nil t)
