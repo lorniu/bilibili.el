@@ -591,14 +591,9 @@
 
 
 ;;; 将 org link 与 `mpvi' 集成。直接点击 bilibili.com 的链接会使用 mpv 打开
+;; 如果不需要这个，将 bilibili 从 `mpvi-org-https-link-rules' 移除即可
 
-(defun bilibili-https-follow-to-mpvi (url arg)
-  "让 bilibli 的链接点击后使用 `mpvi-open` 打开"
-  (if (string-match-p "bilibili.com/" url)
-      (mpvi-open (concat "https:" url))
-    (browse-url (concat "https:" url) arg)))
-
-(org-link-set-parameters "https" :follow #'bilibili-https-follow-to-mpvi)
+(add-to-list 'mpvi-org-https-link-rules "www.bilibili.com/")
 
 (provide 'bilibili)
 
