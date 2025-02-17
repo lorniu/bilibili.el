@@ -127,9 +127,9 @@ Compat with `string-pixel-width' in Emacs 29."
   "输出到 Org 中的格式。可以根据自己的喜好自定义"
   (with-slots (author mid title played replied duration date meta) o
     (let* ((time (if (numberp duration) (mpvi-secs-to-hms duration nil t) (string-trim duration)))
-           (awidth (if-let (ps (and author
-                                    (mapcar (lambda (v) (bilibili-string-pixel-width (slot-value v 'author)))
-                                            (alist-get 'videos meta))))
+           (awidth (if-let* ((ps (and author
+                                      (mapcar (lambda (v) (bilibili-string-pixel-width (slot-value v 'author)))
+                                              (alist-get 'videos meta)))))
                        (+ (apply #'max ps) 20)
                      220))
            (space1 (if author (bilibili-get-padding-spaces author awidth 1) ""))
@@ -502,7 +502,7 @@ Compat with `string-pixel-width' in Emacs 29."
 (defun bilibili-insert-upper-videos (mid pn)
   "某个 UP 主的所有视频。分页，PN 表示页码，0 表示所有"
   (interactive
-   (list (if-let (id (org-entry-get (point) "MID"))
+   (list (if-let* ((id (org-entry-get (point) "MID")))
              (read-string "mid: " id nil id)
            (format "%s" (alist-get 'mid (bilibili-pick-mid))))
          (read-number "Page Number, 0 for all: " 1)))
@@ -528,10 +528,10 @@ Compat with `string-pixel-width' in Emacs 29."
 (defun bilibili-insert-upper-season-videos (mid sid)
   "某个 UP 主某个合集 SID 中的所有视频"
   (interactive
-   (list (if-let (id (org-entry-get (point) "MID"))
+   (list (if-let* ((id (org-entry-get (point) "MID")))
              (read-string "mid: " id nil id)
            (format "%s" (alist-get 'mid (bilibili-pick-mid))))
-         (if-let (id (org-entry-get (point) "SID"))
+         (if-let* ((id (org-entry-get (point) "SID")))
              (read-string "season id: " id nil id)
            (read-string "season id: ")))) ; 没找到合适的列出合集列表的 API
   (cl-assert (and (string-match-p "^[0-9]+$" mid) (string-match-p "^[0-9]+$" mid)))
@@ -557,7 +557,7 @@ Compat with `string-pixel-width' in Emacs 29."
 (defun bilibili-insert-favs (&optional mlid)
   "某个收藏夹下的所有视频，MLID 是收藏夹 id"
   (interactive (list
-                (if-let (id (org-entry-get (point) "MEDIA-ID"))
+                (if-let* ((id (org-entry-get (point) "MEDIA-ID")))
                     (read-string "media-id of fav: " id nil id)
                   (let* ((id (or (org-entry-get (point) "MID")
                                  (ignore-errors (number-to-string (alist-get 'mid (bilibili-get-myinfo))))))
