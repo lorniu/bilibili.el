@@ -1,4 +1,4 @@
-;;; bilibili.el --- BiliBili (哔哩哔哩) in org mode -*- lexical-binding: t -*-
+;;; bilibili.el --- Watch videos of BiliBili (哔哩哔哩) in org mode -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2023 lorniu <lorniu@gmail.com>
 
@@ -10,6 +10,10 @@
 ;; Version: 0.9
 
 ;;; Commentary:
+;;
+;; Watch videos of BiliBili in org mode.
+;;
+;; https://bilibili.com is a popular Chinese video website.
 ;;
 ;; 在 Emacs 中看 B 站。结合 org + mpvi 食用的一系列辅助方法。
 ;;
