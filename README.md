@@ -1,3 +1,6 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![MELPA](https://melpa.org/packages/bilibili-badge.svg)](https://melpa.org/#/bilibili)
+
 # Bilibili
 
 在 Emacs 中看 B 站 (https://bilibili.com) 视频。
@@ -6,10 +9,9 @@
 
 ## 使用步骤
 
- 1. 安装 `mpvi` 包 (`M-x package-install mpvi`)
- 2. 下载本包，加入 `load-path`，并通过 `(require 'bilibili)` 加载
- 3. 在 org mode 中调用 `bilibili-insert-xxx` 插入视频链接
- 4. 点击链接进行视频播放
+ 1. 安装 `mpvi` 包，`(use-package bilibili :ensure t)`
+ 2. 在 org mode 中调用 `bilibili-insert-xxx` 插入视频链接
+ 3. 点击链接进行视频播放
 
 ## 命令预览
 
