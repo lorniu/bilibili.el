@@ -23,13 +23,15 @@
 ;;  2. 在 org buffer 中调用 `bilibili-insert-xxx' 插入相关视频
 ;;  3. 点击链接进行播放
 ;;
-;; ;; https://github.com/SocialSisterYi/bilibili-API-collect
 
 ;;; Code:
+
+;; https://github.com/SocialSisterYi/bilibili-API-collect
 
 (require 'cl-lib)
 (require 'org)
 (require 'mpvi)
+(require 'raq)
 
 (defgroup bilibili nil
   "在 Emacs 中看 B 站。"
@@ -38,45 +40,55 @@
 
 (defcustom bilibili-cookie-text nil
   "需要设定的 B 站的 Cookie 文本。
-在浏览器 (比如 Chrome/Edge) 打开 bilibili，按 F12，在
-Network -> Request Header -> cookie 条目上右键复制可得。"
+
+ 1. 在浏览器 (比如 Chrome/Edge) 打开 bilibili，按 F12
+ 2. 将 Application -> LocalStorage -> www.bilibili.com 下 ac_time_value 字段删除
+ 3. 刷新后，在 Network -> Request Header -> cookie 条目上右键复制可得
+ 4. (setq bilibili-cookie-text 复制的内容)
+
+如果一段时间之后请求失效，需要按照上面步骤重新设置。"
   :type 'string)
 
-(defcustom bilibili-user-agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36"
-  "浏览器的 User Agent 值。"
+(defcustom bilibili-user-agent
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0"
+  "请求所需的 User Agent，除非请求失败否则没必要改动。"
   :type 'string)
 
-(defvar bilibili-myinfo nil)
+(defvar bilibili-debug raq-debug)
 
-(defvar url-http-end-of-headers)
-
-(defun bilibili-req (url &optional data headers)
-  "请求方法，携带 DATA 和 HEADERS 发送 URL 到服务器。"
-  (let ((url-user-agent bilibili-user-agent)
-        (url-request-extra-headers `(("content-type" . "application/x-www-form-urlencoded")
-                                     ("cookie" . ,bilibili-cookie-text) ,@headers))
-        (url-request-method (if data "POST" "GET"))
-        (url-request-data data))
-    (with-current-buffer (url-retrieve-synchronously url t nil)
-      (unwind-protect
-          (condition-case err
-              (progn
-                (goto-char url-http-end-of-headers)
-                ;; hack for 'space/arc/search': {"code":-509,"message":"请求过于频繁，请稍后再试","ttl":1}{data...}
-                (skip-chars-forward " \t\n\r")
-                (when (looking-at "{[^}]+} *{")
-                  (goto-char (- (match-end 0) 1)))
-                (json-read-from-string
-                 (decode-coding-string (buffer-substring (point) (point-max)) 'utf-8)))
-            (error (user-error "Something Wrong: %s" err)))
-        (kill-buffer)))))
+(defun bilibili-req (url &optional data headers raw)
+  "请求方法，携带 DATA 和 HEADERS 发送 URL 到服务器。
+默认返回 JSON 对象，如果 RAW 为真则返回原始响应字符串。"
+  (condition-case err
+      (let* ((raq-debug bilibili-debug)
+             (res (raq (if (string-prefix-p "http" url) url (concat "https://api.bilibili.com" url))
+                       :headers `(("content-type" . "application/x-www-form-urlencoded")
+                                  ("cookie" . ,bilibili-cookie-text)
+                                  ("user-agent" . ,bilibili-user-agent)
+                                  ,@headers)
+                       :data data)))
+        (when bilibili-debug
+          (message "[bilibili] %s" res))
+        (if raw res
+          (with-temp-buffer
+            (insert res)
+            (goto-char (point-min))
+            ;; hack for 'space/arc/search': {"code":-509,"message":"请求过于频繁，请稍后再试","ttl":1}{data...}
+            (skip-chars-forward " \t\n\r")
+            (when (looking-at "{[^}]+} *{")
+              (goto-char (- (match-end 0) 1)))
+            (json-read-from-string
+             (decode-coding-string (buffer-substring (point) (point-max)) 'utf-8)))))
+    (error (user-error "有错误发生: %s\n\n如果没有设定`bilibili-cookie-text'，可能需要设定后再试" err))))
 
 (defun bilibili-get (url-tpl &rest args)
   "Get 请求，URL-TPL 和 ARGS 跟 `format' 类似。"
   (let ((resp (bilibili-req (apply #'format url-tpl (mapcar (lambda (i) (if (stringp i) (url-hexify-string i) i)) args)))))
-    (when (not (= 0 (alist-get 'code resp)))
-      (user-error "ERROR %s: %s" (alist-get 'code resp) (alist-get 'message resp)))
-    (alist-get 'data resp)))
+    (if (not (alist-get 'code resp))
+        resp
+      (when (not (eq 0 (alist-get 'code resp)))
+        (user-error "ERROR %s: %s" (alist-get 'code resp) (alist-get 'message resp)))
+      (or (alist-get 'data resp) resp))))
 
 (cl-defun bilibili-group-number (str &optional (size 4) (char ","))
   "格式化 STR 到指定格式。SIZE 和 CHAR 设定了格式化规则。"
@@ -143,19 +155,21 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
 
 ;;; APIs
 
+(defvar bilibili-myinfo nil)
+
 (defun bilibili-get-myinfo ()
   "我的用户信息。"
   (or bilibili-myinfo
       (setq bilibili-myinfo
-            (bilibili-get "https://api.bilibili.com/x/space/myinfo"))))
+            (bilibili-get "/x/space/myinfo"))))
 
 (defun bilibili-get-userinfo (mid)
   "获取用户 MID 的详细信息。"
-  (bilibili-get "https://api.bilibili.com/x/space/acc/info?mid=%s" mid))
+  (bilibili-get "/x/space/acc/info?mid=%s" mid))
 
 (defun bilibili-get-videoinfo (bvid)
   "获取视频 BVID 的信息。"
-  (bilibili-get "https://api.bilibili.com/x/web-interface/view?bvid=%s" bvid))
+  (bilibili-get "/x/web-interface/view?bvid=%s" bvid))
 
 (cl-defun bilibili-get-followings (&optional mid (order 'attention))
   "获取所有关注的人，可以通过 MID 和 ORDER 指定用户和排序。"
@@ -163,7 +177,7 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
   (unless mid (user-error "MID is required"))
   (let (result total (pn 0))
     (while (or (null total) (< (length result) total))
-      (let ((us (bilibili-get "https://api.bilibili.com/x/relation/followings?order_type=%s&vmid=%s&pn=%d&ps=50" (or order "") mid (cl-incf pn))))
+      (let ((us (bilibili-get "/x/relation/followings?order_type=%s&vmid=%s&pn=%d&ps=50" (or order "") mid (cl-incf pn))))
         (when (= 0 (length (alist-get 'list us)))
           (user-error "Empty response"))
         (unless total (setq total (alist-get 'total us)))
@@ -176,7 +190,7 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
 
 (cl-defun bilibili-get-popular (&optional (pn 1) (ps 50))
   "热门视频。可以通过 PN 和 PS 设定数目和页码。"
-  (cl-loop with data = (bilibili-get "https://api.bilibili.com/x/web-interface/popular?pn=%d&ps=%d" pn ps)
+  (cl-loop with data = (bilibili-get "/x/web-interface/popular?pn=%d&ps=%d" pn ps)
            for item across (alist-get 'list data)
            for stat = (alist-get 'stat item)
            for author = (alist-get 'owner item)
@@ -199,7 +213,7 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
 
 (cl-defun bilibili-get-ranking (&optional (rid 0))
   "排行榜。RID 表示分区号。"
-  (cl-loop with data = (bilibili-get "https://api.bilibili.com/x/web-interface/ranking/v2?rid=%d" rid)
+  (cl-loop with data = (bilibili-get "/x/web-interface/ranking/v2?rid=%d" rid)
            for item across (alist-get 'list data)
            for stat = (alist-get 'stat item)
            for author = (alist-get 'owner item)
@@ -222,7 +236,7 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
 
 (cl-defun bilibili-get-precious (&optional (ps 85))
   "入站必刷。PS 表示页数。"
-  (cl-loop with data = (bilibili-get "https://api.bilibili.com/x/web-interface/popular/precious?page_size=%d" ps)
+  (cl-loop with data = (bilibili-get "/x/web-interface/popular/precious?page_size=%d" ps)
            for item across (alist-get 'list data)
            for stat = (alist-get 'stat item)
            for author = (alist-get 'owner item)
@@ -245,7 +259,7 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
 
 (cl-defun bilibili-get-recommend (&optional (size 10))
   "获取推荐视频。SIZE 表示数目。"
-  (cl-loop with data = (bilibili-get "https://api.bilibili.com/x/web-interface/index/top/rcmd?version=1&ps=%d" size)
+  (cl-loop with data = (bilibili-get "/x/web-interface/index/top/rcmd?version=1&ps=%d" size)
            for item across (alist-get 'item data)
            for stat = (alist-get 'stat item)
            for author = (alist-get 'owner item)
@@ -269,16 +283,16 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
 
 (defun bilibili-get-user-favs (mid)
   "用户 MID 的收藏夹。"
-  (let ((data (bilibili-get "https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=%s" mid)))
+  (let ((data (bilibili-get "/x/v3/fav/folder/created/list-all?up_mid=%s" mid)))
     (cl-coerce (alist-get 'list data) 'list)))
 
 (defun bilibili-get-fav-meta (mlid)
   "收藏夹 MLID 的详情。"
-  (bilibili-get "https://api.bilibili.com/x/v3/fav/folder/info?media_id=%s" mlid))
+  (bilibili-get "/x/v3/fav/folder/info?media_id=%s" mlid))
 
 (cl-defun bilibili-get-fav-videos (mlid &optional (pn 1) (ps 20))
   "收藏夹 MLID 的内容。PN 和 PS 是分页参数。"
-  (cl-loop with data = (bilibili-get "https://api.bilibili.com/x/v3/fav/resource/list?media_id=%s&pn=%d&ps=%d" mlid pn ps)
+  (cl-loop with data = (bilibili-get "/x/v3/fav/resource/list?media_id=%s&pn=%d&ps=%d" mlid pn ps)
            for item across (alist-get 'medias data)
            for author = (alist-get 'upper item)
            for stat = (alist-get 'cnt_info item)
@@ -300,7 +314,7 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
 
 (cl-defun bilibili-get-upper-videos (mid &optional (pn 1) (ps 50))
   "用户 MID 发布的视频。PN 和 PS 是分页参数。"
-  (let* ((data (bilibili-get "https://api.bilibili.com/x/space/arc/search?mid=%s&pn=%d&ps=%d" mid pn ps))
+  (let* ((data (bilibili-get "/x/space/arc/search?mid=%s&pn=%d&ps=%d" mid pn ps))
          (meta (alist-get 'page data)))
     (when (= 0 (length (alist-get 'vlist (alist-get 'list data))))
       (user-error "Empty result"))
@@ -322,7 +336,7 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
 
 (cl-defun bilibili-get-upper-season-videos (mid sid &optional (pn 1) (ps 30))
   "用户 MID 创建的合集 SID 的内容。PN 代表页码，PS 代表每页数目。"
-  (let* ((data (bilibili-get "https://api.bilibili.com/x/polymer/space/seasons_archives_list?mid=%s&season_id=%s&sort_reverse=false&page_num=%d&page_size=%d" mid sid pn ps))
+  (let* ((data (bilibili-get "/x/polymer/space/seasons_archives_list?mid=%s&season_id=%s&sort_reverse=false&page_num=%d&page_size=%d" mid sid pn ps))
          (items (alist-get 'archives data)))
     (if (= 0 (length items)) (user-error "Empty response"))
     (let* ((meta (alist-get 'meta data))
@@ -343,7 +357,7 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
 
 (cl-defun bilibili-search-videos (keyword &optional (pn 1))
   "用 KEYWORD 搜索视频，PN 代表编码。"
-  (cl-loop with data = (bilibili-get "https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=%s&page=%d" keyword pn)
+  (cl-loop with data = (bilibili-get "/x/web-interface/search/type?search_type=video&keyword=%s&page=%d" keyword pn)
            for item across (alist-get 'result data)
            collect (bilibili-video
                     :bvid      (alist-get 'bvid item)
@@ -361,7 +375,7 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
                     :danmaku   (alist-get 'video_review item))))
 
 (defun bilibili-fav-video (rid mlid)
-  "加入收藏夹. RID is avid or bvid, MLID is media-id, 如果 MLID 为空，那么将是取消收藏。"
+  "加入收藏夹。 RID is avid or bvid, MLID is media-id, 如果 MLID 为空，那么将是取消收藏。"
   (if (and bilibili-cookie-text (string-match "bili_jct=\\([^;]+\\);" bilibili-cookie-text))
       (let* ((csrf (match-string 1 bilibili-cookie-text))
              (avid (if (string-prefix-p "BV" rid) (alist-get 'aid (bilibili-get-videoinfo rid)) rid))
@@ -373,18 +387,18 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
              (params (format "type=2&csrf=%s&rid=%s&%s" csrf avid act))
              (headers `(("origin" . "https://www.bilibili.com")
                         ("referer" . ,(format "https://www.bilibili.com/video/%s/" rid)))))
-        (bilibili-req "https://api.bilibili.com/x/v3/fav/resource/deal" params headers))
+        (bilibili-req "/x/v3/fav/resource/deal" params headers))
     (user-error "Cookie invalid")))
 
 (defun bilibili-triple-video (rid)
-  "一键三连. RID is avid or bvid。"
+  "一键三连。RID is avid or bvid。"
   (if (and bilibili-cookie-text (string-match "bili_jct=\\([^;]+\\);" bilibili-cookie-text))
       (let* ((csrf (match-string 1 bilibili-cookie-text))
              (idstr (format "%s=%s" (if (string-prefix-p "BV" rid) "bvid" "aid") rid))
              (params (format "csrf=%s&%s" csrf idstr))
              (headers `(("origin" . "https://www.bilibili.com")
                         ("referer" . ,(format "https://www.bilibili.com/video/%s/" rid)))))
-        (bilibili-req "https://api.bilibili.com/x/web-interface/archive/like/triple" params headers))
+        (bilibili-req "/x/web-interface/archive/like/triple" params headers))
     (user-error "Cookie invalid")))
 
 
@@ -503,6 +517,7 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
               (let (result total (page 0))
                 (while (or (null total) (< (length result) total))
                   (let ((vs (bilibili-get-upper-videos mid (cl-incf page))))
+                    (sleep-for 0.2)
                     (unless total
                       (setq total (alist-get 'count (slot-value (car vs) 'meta))))
                     (setq result (append result vs))))

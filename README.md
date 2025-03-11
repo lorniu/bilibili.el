@@ -26,7 +26,7 @@
 ## 补充说明
 
 - 在某个 Headline 下，第一次执行上述某命令是插入操作，后续执行同一命令则执行更新操作
-- 有些命令 (比如获取推荐视频) 需要 Cookie 支持。在浏览器 (比如 Chrome/Edge) 打开 bilibili.com，按 F12，将 [Network -> Request Header -> cookie] 条目上右键复制的字符串赋值给 `bilibili-cookie-text` 即可
+- 有些命令 (比如获取推荐视频) 需要 Cookie 支持。需要按照 `C-h v bilibili-cookie-text` 中的步骤进行设置
 - 目前只是用来刷视频，其他额外 API 暂没对接
 
 ## 相关链接
