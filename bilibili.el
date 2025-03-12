@@ -586,7 +586,7 @@ Network -> Request Header -> cookie 条目上右键复制可得。"
                      (read-number "Page: " 1))
                org-mode)
   (insert (format "Search '%s', page %d:\n" keyword pageno))
-  (bilibili-insert (bilibili-search-videos keyword pageno)))
+  (bilibili-update-current-org-items (bilibili-search-videos keyword pageno)))
 
 ;;; Action
 
