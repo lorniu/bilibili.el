@@ -10,8 +10,9 @@
 ## 使用步骤
 
  1. 安装 `mpvi` 包，`(use-package bilibili :ensure t)`
- 2. 在 org mode 中调用 `bilibili-insert-xxx` 插入视频链接
- 3. 点击链接进行视频播放
+ 2. 扫码登录: M-x bilibili-login (某些功能需要登录状态)
+ 3. 在 org mode 中调用 `bilibili-insert-xxx` 插入视频链接
+ 4. 点击链接进行视频播放
 
 ## 命令预览
 
@@ -26,7 +27,7 @@
 ## 补充说明
 
 - 在某个 Headline 下，第一次执行上述某命令是插入操作，后续执行同一命令则执行更新操作
-- 有些命令 (比如获取推荐视频) 需要 Cookie 支持。在浏览器 (比如 Chrome/Edge) 打开 bilibili.com，按 F12，将 [Network -> Request Header -> cookie] 条目上右键复制的字符串赋值给 `bilibili-cookie-text` 即可
+- 有些命令 (比如获取推荐视频) 需要 Cookie 支持，因此需要通过 `bilibili-login` 登录
 - 目前只是用来刷视频，其他额外 API 暂没对接
 
 ## 相关链接
